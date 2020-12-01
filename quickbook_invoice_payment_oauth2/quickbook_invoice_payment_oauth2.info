@@ -1,0 +1,15 @@
+name = QuickBook Invoice Payment (Oauth2.0).
+description = Create payment for quickbook invoice.
+core = 7.x
+package = custom
+dependencies[] = commerce_globalone
+dependencies[] = commerce
+dependencies[] = commerce_ui
+dependencies[] = commerce_payment
+
+files[] = quickbook_invoice_payment_oauth2.inc
+files[] = quickbook_invoice_payment_oauth2.html.inc
+
+stylesheets[all][] = assets/css/style.css
+stylesheets[all][] = assets/css/custom.css
+

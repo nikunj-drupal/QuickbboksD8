@@ -1,0 +1,2129 @@
+<?php 
+/**
+ * Implements hook_token_info().
+ */
+function quickbook_invoice_payment_oauth2_token_info() {
+  $info['tokens']['user']['password'] = array(
+    'name' => t('Password'),
+    'description' => t('The password by the user'),
+  );
+  return $info;
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function quickbook_invoice_payment_oauth2_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+
+  $url_options = array('absolute' => TRUE);
+  if (isset($options['language'])) {
+    $url_options['language'] = $options['language'];
+  }
+
+  if ($type == 'user' && !empty($data['user'])) {
+    $account = $data['user'];
+
+    foreach ($tokens as $name => $original) {
+      switch ($name) {
+        case 'password':
+          $replacements[$original] = $account->password;
+          break;
+      }
+    }
+  }
+
+  return $replacements;
+}
+
+
+
+
+
+
+/**
+ * Implements hook_init().
+ */
+function quickbook_invoice_payment_oauth2_init() {
+	global $user;
+	variable_set('quickbook_invoice_menu_url', 'quickbook/invoice');
+	$roles = array('site administrator');
+	if($user->uid == 0) {
+		variable_set('site_frontpage', 'user');
+	}
+	else {
+		variable_set('site_frontpage', 'node');
+	}
+	foreach($roles as $name) {
+   		$existing_role = user_role_load_by_name($name);
+	   	if (empty($existing_role)){
+	      $role = new stdClass();
+	       $role->name = $name;
+	       user_role_save($role);
+	    }
+	}
+}
+
+
+/**
+ * Implementation of hook_block_info().
+ */
+function quickbook_invoice_payment_oauth2_block_info() {
+    $blocks = array();
+    $blocks['logo_block'] = array(
+        'info'  => t("Change Site Logo"),
+    );
+    return $blocks;
+}
+
+/**
+ * Implementation of hook_block_view().
+ */
+function quickbook_invoice_payment_oauth2_block_view($delta = "")
+{	
+	global $base_url;
+    $block = array();
+    switch($delta)
+    {
+        case "logo_block":
+            $block['subject'] = t("");
+            $block['content'] = drupal_get_form("quickbook_invoice_payment_change_logo_form");
+            break;
+    }
+    return $block;
+}
+
+
+function quickbook_invoice_payment_change_logo_form($form, &$form_state) {
+
+	global $user;
+	drupal_flush_all_caches();
+	if(in_array('site administrator', $user->roles)) {
+	   	$form['image_file'] = array(
+	    	'#title' => t('Select Company Logo'),
+	        '#type' => 'file',
+	    );
+	    $form['upload'] = array(
+	        '#type' => 'submit',
+	        '#value' => 'upload',
+	        '#submit' => array('upload_image'),
+	    );
+	}
+    return $form;
+}
+
+function upload_image($form, $form_state) {
+	global $theme;
+
+	$file = file_save_upload('image_file', array('file_validate_extensions' => array('png gif jpg jpeg')), "public://", FILE_EXISTS_REPLACE);
+	
+    if ($file) {
+        $file->status = FILE_STATUS_PERMANENT;
+        file_save($file);
+        $var_name = 'theme_' . $theme . '_settings';
+		$settings = variable_get($var_name, array());
+		$settings['default_logo'] = 0;
+		$settings['logo_path'] = "public://" . $file->filename;
+		variable_set($var_name, $settings);
+    } else {
+        drupal_set_message('No file uploaded.', 'error');
+    }
+    drupal_flush_all_caches();	
+}
+
+
+/**
+ * Implements hook_block_info_alter().
+ */
+function quickbook_invoice_payment_oauth2_block_info_alter(&$blocks, $theme, $code_blocks) {
+  if (isset($blocks['quickbook_invoice_payment_oauth2']['logo_block'])) {
+    $blocks['quickbook_invoice_payment_oauth2']['logo_block']['status'] = 1;
+    $blocks['quickbook_invoice_payment_oauth2']['logo_block']['region'] = 'page_top';
+   }
+}
+
+
+function quickbook_invoice_payment_oauth2_block_view_alter(&$data, $block) {
+	
+	if($block->module == 'system' && $block->delta == 'powered-by') {
+		$data['content'] = t('Power by <a href="https://widenweb.com" target="_blank"> Widenweb </a>');
+	}
+}
+
+
+
+/**
+ * hook_menu()
+ */
+function quickbook_invoice_payment_oauth2_menu() {
+
+	//Create Quickbook invoice parent menu.
+	$menu = array();
+  $menu['menu_name'] = "quickbook-invoice-menu";
+  $menu['title'] = "Invoices";
+  $menu['description'] = "Quickbook Invoice Menu";
+  menu_save($menu);
+
+  //create Setting parent menu.
+  $menu = array();
+  $menu['menu_name'] = "quickbook-setting";
+  $menu['title'] = "Setting";
+  $menu['description'] = "Quickbook Setting";
+  menu_save($menu);
+
+	$qucikbook_menu_url = variable_get('quickbook_invoice_menu_url', '');
+	$qucikbook_payment = $qucikbook_menu_url . '/payment';
+	$qucikbook_payment_success = $qucikbook_menu_url . '/payment/success';
+	$qucikbook_payment_receipt = $qucikbook_menu_url . '/payment/receipt';
+	$quickbook_invoice_list = 'quickbook/invoice-list';
+	$quickbook_payment_list = 'quickBook/payment-list';
+
+	// $items['admin/quickbook-oauth-openid-config'] = [
+ //  'title' => 'Quickbook Oauth Configuration',
+ //  'description' => 'QuickBook Oauth Configuration',
+ //  'page callback' => 'drupal_get_form',
+ //  'page arguments' => ['quickbook_oauth_openid_config_form'],
+ //  'type' => MENU_NORMAL_ITEM,
+ //  'access callback' => true,
+ //  'weight' => 11
+ //  ];
+	$items['oauth-redirect'] = [
+		'type' => MENU_LOCAL_ACTION,
+		'title' => 'OAuth Redirect',
+		'description' => 'OAuth Redirect',
+		'page callback' => 'quickbook_oauth_redirect',
+		'access arguments' => ['access content'],
+	];
+	$items['quickbook/connect'] = [
+		'type' => MENU_LOCAL_ACTION,
+		'title' => 'OAuth Redirect',
+		'description' => 'OAuth Redirect',
+		//'page callback' => 'quickbook_connect_submit',
+		'page callback' => 'quickbook_custom_login_auth',
+		'access arguments' => ['access content'],
+	];
+	$items['quickbook/disconnect'] = [
+		'type' => MENU_LOCAL_ACTION,
+		'title' => 'OAuth Redirect',
+		'description' => 'OAuth Redirect',
+		'page callback' => 'quickbook_disconnect_submit',
+		'access arguments' => ['access content'],
+	];
+	$items['quickbook/invoice'] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Invoice',
+		'description' => 'Invoice',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['quickbook_invoice_form'],
+		'access arguments' => ['access content'],
+	];
+	$items['user/quickbook/register/%'] = array(
+	  'description' => 'Some Group Description',
+	  'page callback' => 'drupal_get_form',
+	  'page arguments' => array('quickbook_register_form', 3),
+	  'access arguments' => ['access content'],
+	);
+	$items[$quickbook_invoice_list] = [
+		'type' => MENU_NORMAL_ITEM,
+		'menu_name' => 'quickbook-invoice-menu',
+		'title' => 'Invoice List',
+		'description' => 'Invoice List',
+		'page callback' => 'quickbook_invoice_list',
+		'access callback' => 'user_has_role',
+		'access arguments' => array('4'),
+	];
+	$items['paymentiframe'] = [
+		'type' => MENU_NORMAL_ITEM,
+		'menu_name' => 'payment-iframe',
+		'title' => 'Payment',
+		'description' => 'Payment',
+		'page callback' => 'quickbook_payment_iframe',
+		'access arguments' => ['access content'],
+	];
+	$items[$quickbook_payment_list] = [
+		'type' => MENU_NORMAL_ITEM,
+		'menu_name' => 'quickbook-invoice-menu',
+		'title' => 'Payment List',
+		'description' => 'Payment List',
+		'page callback' => 'quickbook_payment_list',
+		'access arguments' => ['access content'],
+	];
+	$items[$qucikbook_payment] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Invoice Payment',
+		'description' => 'Invoice Payment',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['quickbook_invoice_payment_form'],
+		'access arguments' => ['access content'],
+	];
+	$items[$qucikbook_payment_success] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Invoice Payment Information',
+		'description' => 'Invoice Payment Information',
+		'page callback' => 'quickbook_invoice_payment_success_view',
+		'access arguments' => ['access content'],
+	];
+	$items[$qucikbook_payment_receipt] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Invoice Payment Receipt',
+		'description' => 'Invoice Payment Receipt',
+		'page callback' => 'quickbook_invoice_payment_receipt',
+		'access arguments' => ['access content'],
+	];
+	$items['quickbook-register-submit'] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Login With Quickbooks',
+		'description' => 'Login With Quickbooks',
+		'page callback' => 'quickbook_custom_login_auth',
+		'access arguments' => ['access content'],
+	];
+	$items['admin/config/services/quickbook-invoice-config'] = [
+		'type' => MENU_NORMAL_ITEM,
+		'menu_name' => 'quickbook-setting',
+		'title' => 'Configuration',
+		'description' => 'QuickBook Invoice Configuration',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['quickbook_invoice_payment_config_form'],
+		'access arguments' => ['access content'],
+	];
+	$items['admin/runcloud-config'] = [
+		'title' => 'RunCloud Configuration',
+		'description' => 'Runcloud Configuration',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['runcloud_config_form'],
+		'access arguments' => ['access content'],
+		'type' => MENU_NORMAL_ITEM,
+		'access callback' => true,
+		'weight' => 11
+	];
+	$items['admin/register-paymnet-config'] = [
+		'title' => 'Register Paymnet Configuration',
+		'description' => 'Register Paymnet Configuration',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['register_payment_config_form'],
+		'access arguments' => ['access content'],
+		'type' => MENU_NORMAL_ITEM,
+		'access callback' => true,
+		'weight' => 11
+	];
+  $items['admin/quickbook-invoice-config'] = [
+  	'title' => 'Quickbook Configuration',
+		'description' => 'QuickBook Invoice Configuration',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => ['quickbook_invoice_payment_config_form'],
+		'type' => MENU_NORMAL_ITEM,
+		'access callback' => true,
+		'weight' => 11
+  ];
+	$items['cancel-subscription'] = [
+		'type' => MENU_LOCAL_ACTION,
+		'title' => 'Cancel Subscription',
+		'description' => 'Cancel Subscription',
+		'page callback' => '_cancel_subscription',
+		'access arguments' => ['access content'],
+	];
+	$items['user/card-list'] = [
+		'type' => MENU_NORMAL_ITEM,
+		'title' => 'Saved Card List',
+		'description' => 'Saved Card List',
+		//'page callback' => 'quickbook_invoice_payment_oauth2_form',
+		'access arguments' => ['access content'],
+		'page callback' => 'drupal_get_form',
+    'page arguments' => array('quickbook_invoice_payment_oauth2_form'),
+    //'access callback' => 'user_is_logged_in',
+	];
+	return $items;
+}
+ $user_detail = array();
+/**
+ * Card List Form
+ */
+function quickbook_invoice_payment_oauth2_form() {
+
+	global $user;
+  $user_id = $user->uid;
+  global $user_detail;
+  $user_detail = db_query("SELECT * from node n JOIN field_data_cardnumber cn ON n.nid = cn.entity_id JOIN field_data_cardtype ct ON cn.entity_id = ct.entity_id JOIN field_data_cardexpiry ce ON ct.entity_id = ce.entity_id WHERE n.uid = $user_id")->fetchAll();
+
+  // Default check and set selected for radio
+  $def_val = db_query("SELECT * FROM node n JOIN field_data_defaultcard dc ON n.nid = dc.entity_id WHERE n.uid = $user_id AND dc.defaultcard_value = 1")->fetchAll();
+
+  foreach ($user_detail as $key => $value) {
+  	if ($value->nid == $def_val[0]->nid){
+  		$def_val = $key;
+  	}
+  }
+  foreach ($user_detail as $key => $value) {
+  	$res[] = $value->cardtype_value.' <br> '.$value->cardnumber_value.' <br> '.$value->cardexpiry_value;
+  }
+  if (isset($res) && $res){
+    $form['card'] = array(
+      '#title' => t('Select your default card for auto payment'),
+      '#type' => 'radios',
+      '#options' => $res,
+      '#default_value' => $def_val,
+    );
+    $form['save_button'] = array(
+      '#type' => 'submit',
+      '#value' => t('Save'),
+    );
+  }
+  else {
+    $form['markup-text'] = array(
+      '#markup' => '<b>There is no card stored in your account.</b>',
+    );
+  }
+
+  return $form;
+}
+
+/**
+ * Card List Form Save
+ */
+function quickbook_invoice_payment_oauth2_form_submit($form, &$form_state) {
+	global $user;
+  $user_id = $user->uid;
+  $submitValue = $form_state['values']['card'];
+  global $user_detail;
+  $field = $user_detail[$submitValue];
+  // Check how many card of same user is set default 
+  $user_entry = db_query("SELECT * FROM node n JOIN field_data_defaultcard dc ON n.nid = dc.entity_id WHERE n.uid = $user_id AND dc.defaultcard_value = 1")->fetchAll();
+
+  // Update OLD entry to 0.
+  if($user_entry){
+	  foreach ($user_entry as $key => $value) {
+	  	$user_status_change = db_query("UPDATE `field_data_defaultcard` SET defaultcard_value = 0 WHERE `entity_id` = $value->nid")->execute();
+	  }
+  }
+  // Update Default card value as per selected item from radio button
+  $set_status = db_query("UPDATE `field_data_defaultcard` SET defaultcard_value = 1 WHERE `entity_id` = $field->nid")->execute();
+	drupal_set_message(t('Configuration has been saved.'));
+}
+
+/**
+ * Runcloud Configuration Form
+ */
+function register_payment_config_form($form, &$form_state) {
+	$form['trial_period_amount'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Trial Period Amount'),
+			'#default_value' => variable_get('trial_period_amount', ' '),
+			'#required' => TRUE,
+			// '#size' => 40,
+		);
+		$form['trial_period_days'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Trial Period'),
+			'#default_value' => variable_get('trial_period_days', ''),
+			'#required' => TRUE,
+			'#size' => 40,
+		);
+		$form['recurring_amount'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Recurring Amount'),
+			'#default_value' => variable_get('recurring_amount', ''),
+			'#required' => TRUE,
+			'#size' => 40,
+		);
+		$form['p_submit'] = array(
+			'#type' => 'submit',
+			'#value' => t('Submit'),
+		);
+		return $form;
+}
+
+/**
+ * Save QuickBook Registartion Config Data
+ */
+function register_payment_config_form_submit($form, &$form_state) {
+	$submitValue = $form_state['values'];
+	variable_set('trial_period_amount', $submitValue['trial_period_amount']);
+	variable_set('trial_period_days', $submitValue['trial_period_days']);
+	variable_set('recurring_amount', $submitValue['recurring_amount']);
+	drupal_set_message("Configuration Save successfully.");
+}
+/**
+ * Runcloud Configuration Form
+ */
+function runcloud_config_form($form, &$form_state) {
+
+	$form['runcloud_api_key'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Runcloud Api Key'),
+			'#default_value' => variable_get('runcloud_api_key', ' '),
+			'#required' => TRUE,
+			// '#size' => 40,
+		);
+		$form['runcloud_api_secret'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Runcloud Api Secret'),
+			'#default_value' => variable_get('runcloud_api_secret', ''),
+			'#required' => TRUE,
+			'#size' => 40,
+		);
+		$form['server_key'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Runcloud Server Key'),
+			'#default_value' => variable_get('server_key', ''),
+			'#required' => TRUE,
+			'#size' => 40,
+		);
+		$form['web_app_key'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Runcloud Servers Web-App Key'),
+			'#default_value' => variable_get('web_app_key', ''),
+			'#required' => TRUE,
+			'#size' => 40,
+		);
+		$form['r_submit'] = array(
+			'#type' => 'submit',
+			'#value' => t('Submit'),
+		);
+		return $form;
+}
+
+/**
+ * Save QuickBook Invoice Cofiguration Data
+ */
+function runcloud_config_form_submit($form, &$form_state) {
+
+	$submitValue = $form_state['values'];
+	variable_set('runcloud_api_key', $submitValue['runcloud_api_key']);
+	variable_set('runcloud_api_secret', $submitValue['runcloud_api_secret']);
+	variable_set('server_key', $submitValue['server_key']);
+	variable_set('web_app_key', $submitValue['web_app_key']);
+	drupal_set_message("Configuration Save successfully.");
+}
+
+/**
+ * QuickBook Configuration Form
+ */
+function quickbook_invoice_payment_config_form($form, &$form_state) {
+	global $user;
+	global $base_url;
+	if(in_array('site administrator', $user->roles) || in_array('administrator', $user->roles)) {
+		$client_id = variable_get('quickbook_client_id', 0);
+		$client_secret = variable_get('quickbook_client_secret', 0);
+		$user_account = user_load($user->uid);
+		$useraccess_token = '';
+		if ($user_account->field_quickbook_accestoken) {
+			$useraccess_token = $user_account->field_quickbook_accestoken['und'][0]['value'];
+		}
+		// if (!$useraccess_token) {
+		// };
+		// $reconnect = variable_get('reconnect', 0);
+		// $seconds = variable_get('x_refresh_token_expires_in', 0);
+		// $access_token_set = variable_get('access_token_set', 'no');
+		// $days = floor($seconds / 3600 / 24);
+		// $expire_date = date('Y-m-d', strtotime(' +'. $days .' day'));
+		// $current_date = date('Y-m-d');
+		if(!$useraccess_token) {
+			//$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+			//$invoiceData = $quickbookConnection->getQuickBookInvoiceList();
+			//if(empty($invoiceData)) {
+				variable_set('x_refresh_token_expires_in', 0);
+				//drupal_set_message('Please connect the Quickbooks app.','warning');
+				$form['quickbook_connect'] = array(
+					'#type' => 'submit',
+					'#value' => t('Connect'),
+				  "#submit" => array("quickbook_connect_submit_handler", ),
+				  '#prefix' => '<div class="btnConnect">',
+				  '#suffix' => '</div>',
+				);
+			}
+			else {
+				// $form['connect_info'] = array(
+				// 	// '#markup' => 'QuickBook APP connected..! Will be expired at ' . $expire_date . '.',
+				// 	'#markup' => t('<div class="alert alert-info"><strong>Info!</strong> QuickBook APP connected..! Will be expired at <b>' . $expire_date . '</b>.</div>'),
+				// );
+				$form['#prefix'] = '<h3>You are connected to Quickbooks.</h3><a href="'.$base_url.'/quickbook/disconnect">Disconnect</a>';
+				// $form['quickbook_disconnect'] = array(
+				// 	'#type' => 'submit',
+				// 	'#value' => t('Disconnect'),
+				//     "#submit" => array("quickbook_disconnect_submit", ),
+				// );
+			//}
+		}
+
+		if (in_array('administrator', $user->roles)) {
+			$form['quickbook'] = array(
+		    	'#type' => 'fieldset',
+		   		'#title' => t('Quickbook'),
+		   		'#collapsible' => TRUE, // Added
+			    '#collapsed' => FALSE,  // Added
+			);
+			$form['quickbook']['development'] = array(
+				'#type' => 'fieldset',
+				'#title' => t('Development'),
+				'#collapsible' => TRUE, // Added
+				'#collapsed' => FALSE,  // Added
+			);
+			$form['quickbook']['production'] = array(
+				'#type' => 'fieldset',
+				'#title' => t('Production'),
+				'#collapsible' => TRUE, // Added
+				'#collapsed' => FALSE,  // Added
+			);
+			$form['globalone'] = array(
+				'#type' => 'fieldset',
+				'#title' => t('Globalone'),
+				'#collapsible' => TRUE, // Added
+				'#collapsed' => FALSE,  // Added
+			);
+			$form['quickbook']['quickbook_company_id'] = array(
+				'#type' => 'textfield',
+				'#title' => t('Company Id'),
+				'#default_value' => variable_get('quickbook_company_id'),
+				'#required' => TRUE,
+				'#size' => 40,
+			);
+			$form['quickbook']['development']['quickbookclient_id'] = array(
+				'#type' => 'textfield',
+				'#title' => t('Development Client Id'),
+				'#default_value' => variable_get('quickbook_client_id'),
+				'#required' => TRUE,
+				'#size' => 40,
+			);
+			$form['quickbook']['development']['quickbookclient_secret'] = array(
+				'#type' => 'textfield',
+				'#title' => t('Development Client Secret'),
+				'#default_value' => variable_get('quickbook_client_secret'),
+				'#required' => TRUE,
+				'#size' => 60,
+			);
+			$form['quickbook']['production']['production_client_id'] = array(
+			    '#type' => 'textfield',
+			    '#title' => t('Production Client Id'),
+			    '#default_value' => variable_get('production_client_id', ''),
+			    '#required' => TRUE,
+			    '#size' => 40,
+			);
+		  	$form['quickbook']['production']['production_client_secret'] = array(
+		    	'#type' => 'textfield',
+		    	'#title' => t('Production Client Secret'),
+		    	'#default_value' => variable_get('production_client_secret', ''),
+		    	'#required' => TRUE,
+		    	'#size' => 40,
+		  	);
+		  	$form['quickbook']['quickbook_mode'] = array(
+		    	'#type' => 'select',
+		   		'#title' => t('Quickbook Mode'),
+		    	'#default_value' => variable_get('quickbook_mode', 'development'),
+		    	'#options' => ['development' => 'development', 'production' => 'production'],
+		    	'#required' => TRUE,
+		    );
+			$form['globalone']['quickbook_invoice_global_one_mode'] = array(
+				'#type' => 'select',
+				'#title' => t('Global One Mode'),
+				'#default_value' => variable_get('quickbook_invoice_global_one_mode', 'test'),
+				'#options' => ['test' => 'Test', 'live' => 'Live'],
+				'#required' => TRUE,
+				// '#size' => 40,
+			);
+			$form['globalone']['quickbook_invoice_global_one_secret'] = array(
+				'#type' => 'textfield',
+				'#title' => t('Global One Secret'),
+				'#default_value' => variable_get('quickbook_invoice_global_one_secret', ''),
+				'#required' => TRUE,
+				'#size' => 40,
+			);
+			$form['globalone']['quickbook_invoice_global_one_terminal'] = array(
+				'#type' => 'textfield',
+				'#title' => t('Global One Terminal Id'),
+				'#default_value' => variable_get('quickbook_invoice_global_one_terminal', ''),
+				'#required' => TRUE,
+				'#size' => 40,
+			);
+			$form['q_submit'] = array(
+				'#type' => 'submit',
+				'#value' => t('Submit'),
+			);
+		}
+	}
+	else {
+		$form['access_page'] = array(
+			'#markup' => t('You have not access for this page.'),
+		);
+	}
+	
+	return $form;
+
+}
+
+function quickbook_connect_submit_handler($form, &$form_state) {
+	drupal_goto('/quickbook/connect');
+}
+
+/*
+* quickbook_connect_submit()
+*/
+function quickbook_connect_submit() {
+	global $base_url;
+	variable_set('reconnect',0);
+	variable_set('access_token_set', 'yes');
+
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$scope = "com.intuit.quickbooks.accounting";
+	$QuickBookInvoiceAPI = new QuickBookInvoiceAPI($client_id, $client_secret,$scope);
+	$QuickBookInvoiceAPI->quickbookConnection( TRUE );
+}
+
+
+/*
+* quickbook_connect_submit()
+*/
+function quickbook_disconnect_submit() {
+	global $user;
+	global $base_url;
+
+	if (!$user->uid) {
+		drupal_goto($base_url.'/user');
+	}else{
+		$client_id = variable_get('quickbook_client_id', 0);
+		$client_secret = variable_get('quickbook_client_secret', 0);
+		$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+		$invoiceData = $quickbookConnection->getQuickBookInvoiceList();
+		$user_account = user_load($user->uid);
+		if ($invoiceData) {
+			if ($user_account->field_quickbook_accestoken) {
+				$token = $user_account->field_quickbook_accestoken['und'][0]['value'];
+				$client_id = variable_get('quickbook_client_id', 0);
+				$client_secret = variable_get('quickbook_client_secret', 0);
+				$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+				$dataService = $quickbookConnection->dataService;
+				$OAuth2LoginHelper = $dataService->getOAuth2LoginHelper();
+				$revokeToken = $OAuth2LoginHelper->revokeToken($token);
+				if ($revokeToken) {
+					variable_set('access_token_set', 'no');
+					$user_account -> field_quickbook_accestoken['und'][0]['value'] = "";
+					user_save($user_account);
+				}
+				//drupal_flush_all_caches();
+				drupal_goto('/admin/quickbook-invoice-config');
+			}
+		}
+		else{
+			variable_set('access_token_set', 'no');
+			if ($user_account -> field_quickbook_accestoken) {
+				$user_account -> field_quickbook_accestoken['und'][0]['value'] = "";
+			}
+			user_save($user_account);
+			drupal_goto('/admin/quickbook-invoice-config');
+		}
+	}
+}
+
+
+
+/*
+* Page callback quickbook_oauth_redirect()
+*/
+function quickbook_oauth_redirect() {
+	global $base_url;
+	global $user;
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$QuickBookInvoiceAPI = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$code = $_GET["code"];
+    $responseState = $_GET['state'];
+    $realmID = $_GET['realmId'];
+    variable_set('realmId', $realmID);
+    $grant_type = "authorization_code";
+    $tokenEndPointUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+    $redirect_uri = $base_url . "/oauth-redirect";
+    $result = $QuickBookInvoiceAPI->getAccessToken($tokenEndPointUrl,  $code, $redirect_uri, $grant_type);
+		// $dataService = $QuickBookInvoiceAPI->dataService;
+		// $OAuth2LoginHelper = $dataService->getOAuth2LoginHelper();
+  //   $result1 = $OAuth2LoginHelper::ValidateIDToken($clientID, $ID_token);
+    $openID_accessToken = $result['access_token'];
+    if (isset($result['id_token'])) {
+	    $user_id_token = $result['id_token'];
+	     watchdog('quickbook_invoice_payment', 'id_token::'.$user_id_token);
+    }
+    if(isset($result['x_refresh_token_expires_in']) && isset($result['refresh_token'])) {
+			variable_set('x_refresh_token_expires_in', $result['x_refresh_token_expires_in']);
+			variable_set('refresh_token', $result['refresh_token']);
+			variable_set('access_token', $result['access_token']);
+    }
+   	if (user_is_anonymous() == 1) {
+	    //Use Sandbox certificate
+	    $useroauth_mode = variable_get('quickbook_mode', 'development');
+	    $usrInfoURL = 'https://sandbox-accounts.platform.intuit.com/v1/openid_connect/userinfo';
+
+	    if ($useroauth_mode == 'development') {
+				$usrInfoURL = 'https://sandbox-accounts.platform.intuit.com/v1/openid_connect/userinfo';
+	    }
+	    elseif ($useroauth_mode == 'production') {
+				$usrInfoURL = 'https://accounts.platform.intuit.com/v1/openid_connect/userinfo';
+	    }
+	    $userInfo = $QuickBookInvoiceAPI->callForOpenIDEndpoint($openID_accessToken, $usrInfoURL, $realmID);
+	    if ($userInfo) {
+			if ('' != $userInfo['email']) {
+			  	$userMail = $userInfo['email'];
+	    	  	$usersub = $userInfo['sub'];
+	    		$user_detail = db_query("SELECT users.name AS users_name, users.uid AS uid, users.created AS users_created FROM users users LEFT JOIN field_data_field_user_sub field_data_field_user_sub ON users.uid = field_data_field_user_sub.entity_id AND (field_data_field_user_sub.entity_type = 'user' AND field_data_field_user_sub.deleted = '0') WHERE (( (users.status <> '0') AND (field_data_field_user_sub.field_user_sub_value LIKE '".$usersub."') ))")->fetchAll();
+
+				variable_set('reconnect', 0);
+			  	//$user = user_load_by_mail($userMail);
+				if (empty($user_detail)) {
+					//This will generate a random password, you could set your own here
+					$password = user_password(8);
+
+					//set up the user fields
+					$fields = array(
+					  'name' => 'user-'.$usersub,
+					  'mail' => $userMail,
+					  'pass' => $password,
+					  'status' => 1,
+					  'init' => $userMail,
+					  'roles' => array(
+					    DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+					    4 => 'site administrator',
+					  ),
+					);
+					//the first parameter is left blank so a new user is created
+					$account = user_save('', $fields);
+					$existingUser = user_load($account->uid);
+					$existingUser -> field_user_company['und'][0]['value'] = $userInfo['realmID'];
+					$existingUser -> field_quickbook_familyname['und'][0]['value'] = $userInfo['familyName'];
+					$existingUser -> field_quickbook_givenname['und'][0]['value'] = $userInfo['givenName'];
+					$existingUser -> field_quickbook_phonenumber['und'][0]['value'] = $userInfo['phoneNumber'];
+					$existingUser -> field_quickbook_accestoken['und'][0]['value'] = $openID_accessToken;
+					$existingUser -> field_user_sub['und'][0]['value'] = $usersub;
+					user_save($existingUser);
+
+
+					// If you want to send the welcome email, use the following code
+					// Manually set the password so it appears in the e-mail.
+					$account->password = $fields['pass'];
+					unset($_SESSION['user_password']);
+	    			$_SESSION['user_password'] = $fields['pass'];
+					// Send the e-mail through the user module.
+					drupal_mail('user', 'register_no_approval_required', $userMail, NULL, array('account' => $account), variable_get('site_mail', 'johnnyharpertesting@gmail.com'));
+				  //$url = $base_url . '/user/quickbook/register/'.$userMail;
+				  $form_state['uid'] = $account->uid;
+				  user_login_submit(array(), $form_state);
+				  $url = '/user/'.$account->uid.'/edit';
+				  drupal_goto($url);
+				}
+				else{
+					$uid = $user_detail[0]->uid;
+					$form_state = array();
+				  $form_state['uid'] = $uid;
+				  user_login_submit(array(), $form_state);
+				  drupal_goto('/user/'.$uid.'/edit');
+				}
+			}
+		}
+		if (!$user->uid) {
+			drupal_set_message("Please Sign in With our App. We are unable to fetch your Information.", $type= 'warning');
+			drupal_goto($base_url . "/user");
+		}
+   	}
+   	else{
+    	drupal_goto("/admin/config/services/quickbook-invoice-config");
+   	}
+    //$_SESSION['userInfo'] = $userInfo;
+}
+
+/**
+ * Save QuickBook Invoice Cofiguration Data
+ */
+function quickbook_invoice_payment_config_form_submit($form, &$form_state) {
+	global $user;
+	//if( in_array('site administrator', $user->roles)) {
+		$new_company_id = variable_get('quickbook_company_id','');
+		$company_id = $form_state['values']['quickbook_company_id'];
+		echo 'quickbook_invoice_payment_config_form_submit ' . $company_id . ' != ' . $new_company_id;
+		if($company_id != $new_company_id) {
+			variable_set('reconnect', 1);
+		}
+		else {
+			variable_set('reconnect', 0);
+		}
+	//}
+	//if (in_array('administrator', $user->roles)) {
+		$client_id = $form_state['values']['quickbookclient_id'];
+		$client_secret = $form_state['values']['quickbookclient_secret'];
+		$new_client_secret = variable_get('quickbook_client_secret','');
+		$new_client_id = variable_get('quickbook_client_id','');
+		echo $client_id . ' != ' . $new_client_id . ' || ' . $client_secret . ' != ' . $new_client_secret;
+		die();
+		if($client_id != $new_client_id || $client_secret != $new_client_secret) {
+			variable_set('reconnect', 1);
+		}
+		else {
+			variable_set('reconnect', 0);
+		}
+		variable_set( 
+			'quickbook_client_id', 
+			$form_state['values']['quickbookclient_id']
+		);
+		variable_set( 
+			'quickbook_client_secret', 
+			$form_state['values']['quickbookclient_secret']
+		);
+	//}
+
+	variable_set( 
+		'quickbook_company_id', 
+		$form_state['values']['quickbook_company_id'] 
+	);
+	variable_set( 
+		'quickbook_mode', 
+		$form_state['values']['quickbook_mode'] 
+	);
+	variable_set( 
+		'quickbook_invoice_global_one_secret', 
+		$form_state['values']['quickbook_invoice_global_one_secret'] 
+	);
+	variable_set( 
+		'quickbook_invoice_global_one_terminal', 
+		$form_state['values']['quickbook_invoice_global_one_terminal'] 
+	);
+	$prod_clientid = $form_state['values']['production_client_id'];
+  $prod_clientsec = $form_state['values']['production_client_secret'];
+	variable_set('production_client_id', $prod_clientid);
+  variable_set('production_client_secret', $prod_clientsec);
+	drupal_set_message( t( 'Configuration saved successfully.' ) );
+}
+
+
+/**
+ * QuickBook Invoice List View Page
+ */
+function quickbook_invoice_list() {
+	// $connected = _quickbooks_app_connected();
+	// if(!$connected) {
+	// 	drupal_goto('admin/config/services/quickbook-invoice-config');
+	// }
+	// _check_expire_app_connection();
+
+	global $base_url;
+	global $user;
+	// $path = current_path();
+	// print('<pre style="color:red; font-size:16px">');
+	// print_r($path);
+	// print('</pre>');
+	// exit;
+			
+	$user_account = user_load($user->uid);
+	$quickbook_accestoken = '';
+	if ($user_account->field_quickbook_accestoken) {
+		$quickbook_accestoken = $user_account->field_quickbook_accestoken['und'][0]['value'];
+	}
+	if ($quickbook_accestoken) {
+		$client_id = variable_get('quickbook_client_id', 0);
+		$client_secret = variable_get('quickbook_client_secret', 0);
+		$refresh_token = variable_get('refresh_token');
+		$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+		// $quickbookConnection->reCreateAccessTokens();
+		$grant_type = "refresh_token";
+		
+	    $tokenEndPointUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+	    $refresh_token = variable_get('refresh_token',"");
+		$result = $quickbookConnection->refreshAccessToken($tokenEndPointUrl, $grant_type, $refresh_token);
+		if(isset($result['x_refresh_token_expires_in']) && isset($result['refresh_token'])) {
+	    	variable_set('x_refresh_token_expires_in', $result['x_refresh_token_expires_in']);
+		    variable_set('refresh_token', $result['refresh_token']);
+		    variable_set('access_token', $result['access_token']);
+	    }
+		$invoiceData = $quickbookConnection->getQuickBookInvoiceList();
+		if ($invoiceData) {
+			variable_set('access_token_set', 'yes');
+			$quickBookInvoiceHtml = new QuickBookInvoiceHTML( $invoiceData[0]['invoice_id'], $invoiceData );
+			ob_start(); 
+			$quickBookInvoiceHtml->quickbookInvoiceListHtml();
+			$html = ob_get_contents(); 
+			ob_end_clean();
+			return [
+				'#markup' => $html,
+			];
+		}
+		else{
+			variable_set('access_token_set', 'no');
+			drupal_goto('admin/config/services/quickbook-invoice-config');
+		}
+	}
+	else{
+		$message = '<h3>You are currently not connected to QuickBooks. To have access to the information of your QuickBooks account on this page, please go to your account page to connect WidenPay to QuickBooks.</h3>';
+		return [
+				'#markup' => $message,
+			];
+	}
+}
+
+function quickbook_payment_iframe(){
+	global $base_url;
+	global $user;
+	$user_account = user_load($user->uid);
+	$globalone_mode = $globalone_live_url = '';
+	if ($user_account->field_globalone_mode) {
+		$globalone_mode = $user_account->field_globalone_mode['und'][0]['value'];
+	}
+	if ($globalone_mode == 'Development') {
+		$final_url = 'https://testpayments.globalone.me/merchant/paymentpage?'.$_SERVER['QUERY_STRING'];
+	}else{
+		if ($globalone_mode) {
+			if ($user_account->field_globalonemerchant_live_url) {
+				$globalone_live_url = $user_account->field_globalonemerchant_live_url['und'][0]['value'];
+			}
+			if ($globalone_live_url) {
+				$final_url = $globalone_live_url.'?'.$_SERVER['QUERY_STRING'];
+			}
+			else{
+				drupal_set_message('Please Set Globalonemerchant Live URL','warning');
+				drupal_goto('/user/'.$user->uid.'/edit');
+			}
+		}
+		else{
+			drupal_set_message('Please Set Globalonemerchant Mode','warning');
+			drupal_goto('/user/'.$user->uid.'/edit');
+		}
+	}
+	$html = '<iframe src="'.$final_url.'"  height="600px" width="100%" frameBorder="0" style="background-color
+	: #fff;" id="paymnet-iframe"></iframe>';
+	// return [
+	// 	'#markup' => $html,
+	// ];
+	return $html;
+}
+
+/**
+ * QuickBook Invoice List View Page
+ */
+function quickbook_payment_list() {
+	$connected = _quickbooks_app_connected();
+	if(!$connected) {
+		drupal_goto('admin/config/services/quickbook-invoice-config');
+	}
+	_check_expire_app_connection();
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$refresh_token = variable_get('refresh_token');
+	$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$grant_type = "refresh_token";
+  $tokenEndPointUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+  $refresh_token = variable_get('refresh_token',"");
+	$result = $quickbookConnection->refreshAccessToken($tokenEndPointUrl, $grant_type, $refresh_token);
+	if(isset($result['x_refresh_token_expires_in']) && isset($result['refresh_token'])) {
+    	variable_set('x_refresh_token_expires_in', $result['x_refresh_token_expires_in']);
+	    variable_set('refresh_token', $result['refresh_token']);
+	    variable_set('access_token', $result['access_token']);
+    }
+	$PaymentData = $quickbookConnection->getQuickBookPaymentList();
+	$quickBookInvoiceHtml = new QuickBookInvoiceHTML( $PaymentData[0]['invoice_id'], $PaymentData );
+	ob_start(); 
+	$quickBookInvoiceHtml->quickbookPaymentListHtml();
+	$html = ob_get_contents(); 
+	// $page = pager_default_initialize(5, 3);
+	// $html .= theme('pager');
+	ob_end_clean();
+	return [
+		'#markup' => $html,
+	];
+}
+
+/**
+ * QuickBook Invoice id Form.
+ */
+function quickbook_invoice_form($form, &$form_state) {
+	$connected = _quickbooks_app_connected();
+	if(!$connected) {
+		drupal_goto('admin/config/services/quickbook-invoice-config');
+	}
+
+	$current_url = strstr(request_uri(), "invoice/");
+	$break_url = explode('/', $current_url);
+	$company_id = $break_url[1];
+	$query = new EntityFieldQuery();
+	$query->entityCondition('entity_type', 'user')
+	->fieldCondition('field_user_company', 'value', $company_id, '=');	
+	$result = $query->execute();
+	if (isset($result['user'])) {
+		$company_admin = entity_load('user', array_keys($result['user']));
+		foreach ($company_admin as $cuid => $cuser) {
+			# code...
+			$company_admin_id = $cuid;
+		}		
+	}
+  		
+  	$_GET['invoice_id'] = end($break_url);
+
+	if(!isset( $_GET['invoice_id'] )) {
+		$form['invoice_id'] = array(
+			'#type' => 'textfield',
+			'#title' => t('Please Enter Invoice Id'),
+			'#required' => TRUE,
+			'#size' => 20,
+		);
+		$form['q_submit'] = array(
+			'#type' => 'submit',
+			'#value' => t('Continue'),
+		);
+		$form['#method'] = "GET";
+	}
+	else {
+    // _check_expire_app_connection();
+    $invoice_id = isset( $_GET['invoice_id'] ) ? $_GET['invoice_id'] : '';
+        
+    $client_id = variable_get('quickbook_client_id', 0);
+    $client_secret = variable_get('quickbook_client_secret', 0);
+    $refresh_token = variable_get('refresh_token');
+    // $scope = "com.intuit.quickbooks.accounting com.intuit.quickbooks.payment openid profile email phone address";
+    $quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+    $grant_type = "refresh_token";
+    $tokenEndPointUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+    $refresh_token = variable_get('refresh_token',"");
+    $result = $quickbookConnection->refreshAccessToken($tokenEndPointUrl, $grant_type, $refresh_token);
+   
+    if(isset($result['x_refresh_token_expires_in']) && isset($result['refresh_token'])) {
+        variable_set('x_refresh_token_expires_in', $result['x_refresh_token_expires_in']);
+        variable_set('refresh_token', $result['refresh_token']);
+        variable_set('access_token', $result['access_token']);
+    }
+    if( $invoice_id != '' ) {
+      $invoiceData = $quickbookConnection->getQuickBookInvoice( $invoice_id );
+      if( !empty( $invoiceData ) ) {
+        $quickBookInvoiceHtml = new QuickBookInvoiceHTML( $invoice_id, $invoiceData );
+        ob_start(); 
+        $quickBookInvoiceHtml->quickbookInvoicePaymentHtml();
+        $html = ob_get_contents(); 
+          ob_end_clean();
+          $form['invoice'] = array(
+              '#markup' => $html,
+            );
+          if( $invoiceData['balance'] > 0 ) {
+            $_SESSION["store_card"] = 0;
+            $form['store_card'] = array(
+              '#type' => 'checkbox',
+              '#title' => t('Store Card Details'),
+              '#size' => 20,
+            );
+            $form['pay_now_button'] = array(
+              '#type' => 'submit',
+              '#value' => t('Pay Now'),
+            );
+          }
+      }
+      else {
+				$quickbook_invoice_html = new QuickBookInvoiceHTML($invoice_id, $invoiceData);
+				$error_msg = $quickbook_invoice_html->quickbookInvoiceError();
+				$form['invoice'] = array(
+		    			'#markup' => '<h3>'.$error_msg.'</h3>',
+		    		);
+			}
+		}
+		else {
+			$quickbook_invoice_html = new QuickBookInvoiceHTML($invoice_id, []);
+			$error_msg = $quickbook_invoice_html->quickbookInvoiceError();
+			$form['invoice'] = array(
+		    			'#markup' => '<h3>'.$error_msg.'</h3>',
+		    		);
+		}
+	}
+	return $form;
+}
+
+/**
+ * QuickBook Invoice id Form Submit.
+ */
+function quickbook_invoice_form_submit($form, &$form_state){
+  $_SESSION["store_card"] =$form_state['values']['store_card'];
+  global $base_url;
+  $url = ''; 
+          if( variable_get('quickbook_invoice_menu_url', '') != '') {
+            $url = variable_get('quickbook_invoice_menu_url', '') . '/';
+          }
+  $paynow_url = $base_url . '/' . $url . 'payment?invoice_id=' . $_GET['invoice_id'];
+  drupal_goto($paynow_url);
+}
+
+/**
+ * QuickBook Invoice Payment Success View Page
+ */
+function quickbook_invoice_payment_receipt() {
+
+  $res_para = $_GET;
+  watchdog("quickbook_invoice_payment_receipt", '<pre>' . print_r( $res_para, true) . '</pre>');
+
+  //Code to save card details
+  //global $user;
+  //$user_id = $user->uid;
+
+  // Check ACH field
+  // $ach ='';
+  // if ($user_acc->field_ach) {
+  //  $ach = $user_acc->field_ach['und'][0]['value'];
+  // }
+  $exp_date = $res_para['CARDEXPIRY'];
+  $split_date = str_split($exp_date);
+  $newDate = $split_date[0].$split_date[1]."/".$split_date[2].$split_date[3];
+  $new_card = $res_para['CARDNUMBER'];
+  $new_card_type = $res_para['CARDTYPE'];
+  //if($ach == 'Yes' || $ach == 'yes' ){
+
+    $customer_email = $_SESSION["customer_email"];
+    $customer = db_query("SELECT uid from users WHERE mail = '$customer_email'")->fetchAll();
+    $customer_id = !empty($customer) ? $customer[0]->uid : '';
+    if($customer){
+      $user_acc = user_load($customer_id);
+      $user_id = $customer_id;
+      //Check user's first entry to set default card
+      $def_card = 0;
+      $user_def_card = db_query("SELECT * from node WHERE uid = $user_id")->fetchAll();
+      if(empty($user_def_card)){
+        $def_card = 1;
+      }
+      else {
+        $def_card = 0;
+      }
+
+      // Check condition whether this user has already saved card or not.
+      $user_detail = db_query("SELECT * from node n JOIN field_data_cardnumber cn ON n.nid = cn.entity_id JOIN field_data_cardtype ct ON cn.entity_id = ct.entity_id JOIN field_data_cardexpiry ce ON ct.entity_id = ce.entity_id WHERE n.uid = $user_id AND cn.cardnumber_value = '$new_card' AND ct.cardtype_value = '$new_card_type' AND ce.cardexpiry_value = '$newDate'")->fetchAll();
+    }
+
+    // Vendor pays on behalf of customer scenario
+    if(empty($customer)){
+      $password = user_password(8);
+      $new_user = array(
+        'name' => $customer_email,
+        'pass' => $password,
+        'mail' => $customer_email,
+        'status' => 0,
+        'init' => $customer_email,
+        'roles' => array(
+          DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+          2 => 'custom role',
+        ),
+      );
+      user_save('', $new_user);
+      $customer = db_query("SELECT uid from users WHERE mail = '$customer_email'")->fetchAll();
+      $customer_id = $customer[0]->uid;
+      $def_card = 1;
+      // ACH yes while user creation 
+      /*$customer_ach = db_insert('field_data_field_ach') 
+      ->fields(array(
+        'entity_type' => 'user',
+        'bundle' => 'user',
+        'entity_id' => $customer_id,
+        'language' => 'und',
+        'delta' => 0,
+        'field_ach_value' => 'Yes',
+      ))
+      ->execute();*/
+    }
+    if(isset($_SESSION["store_card"]) && $_SESSION["store_card"] == '1'){
+      if(empty($user_detail)){
+        $node = new stdClass();
+        $node->title = $customer_id;
+        $node->type = "saved_cards";
+        $node->language = LANGUAGE_NONE;
+        $node->uid = $customer_id;
+        $node->status = 1;
+        $node->promote = 0;
+        $node->comment = 0;
+        $node->carduser_id[$node->language][]['value'] = $customer_id;
+        $node->securecardmerchantref[$node->language][]['value'] = $res_para['SECURECARDMERCHANTREF'];
+        $node->cardreference[$node->language][]['value'] = $res_para['CARDREFERENCE'];
+        $node->isstored[$node->language][]['value'] = $res_para['ISSTORED'];
+        $node->scerror = isset($res_para['SCERROR']) ? $res_para['SCERROR'] : '';
+        $node->merchantref[$node->language][]['value'] = $res_para['MERCHANTREF'];
+        $node->cardtype[$node->language][]['value'] = $res_para['CARDTYPE'];
+        $node->cardexpiry[$node->language][]['value'] = $newDate;
+        $node->cardnumber[$node->language][]['value'] = $res_para['CARDNUMBER'];
+        $node->defaultcard[$node->language][]['value'] = $def_card;
+        $node = node_submit($node);
+        node_save($node);
+      }
+    }
+    unset($_SESSION['store_card']);
+    unset($_SESSION['customer_email']);
+	//}
+	// End Code to save card details
+	$order_id = isset($_GET['ORDERID']) ? $_GET['ORDERID'] : '';
+	$invoice_id = explode('-', $order_id)[0];
+	$terminal_id = isset($_GET['TERMINALID']) ? $_GET['TERMINALID'] : '';
+	$unique_ref = isset($_GET['UNIQUEREF']) ? $_GET['UNIQUEREF'] : '';
+	$response_code = isset($_GET['RESPONSECODE']) ? $_GET['RESPONSECODE'] : '';
+	$response_text = isset($_GET['RESPONSETEXT']) ? $_GET['RESPONSETEXT'] : '';
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$invoiceData = $quickbookConnection->getQuickBookInvoice( $invoice_id );
+	// $invoice_id = isset($_GET['TERMINALID']) ? $_GET['TERMINALID'] : '';
+	// $invoice_id = isset($_GET['UNIQUEREF']) ? $_GET['UNIQUEREF'] : '';
+	// $invoice_id = isset($_GET['RESPONSECODE']) ? $_GET['RESPONSECODE'] : '';
+
+	if( $response_code ) {
+  switch ($response_code) {
+    // Approved.
+    case 'A':
+      $message = t('Payment complete.');
+      break;
+
+    // Referred.
+    case 'R':
+      $message= t('The payment gateway referred authorisation.');
+      break;
+
+    // Declined or unknown.
+    case 'D':
+      default:
+      $message = t('The payment failed with the response: @response.', array(
+        '@response' => $response_text,
+      ));
+      break;
+  }
+}
+	if ( isset( $response_code ) && $response_code == 'A' ) {
+			$invoiceData['payment_ref'] = $unique_ref;
+			$invResponse = $quickbookConnection->createQuickBookInvoicePayment( $invoiceData);
+			if( $invResponse ) {
+				drupal_set_message(t('Payment is successfully made for invoice !invoiceNumber', array('!invoiceNumber' => $invoiceData['invoice_number'])));
+				drupal_goto(variable_get('quickbook_invoice_menu_url', '').'/payment/success', [
+					'query' => [
+						'invoice_id' => $invoice_id,
+						'payment_id' => $invResponse->Id,
+						'payment_ref' => $unique_ref
+					]
+				]);
+			}
+			else {
+				drupal_set_message(t('Payment is successfully made for invoice !invoiceNumber. But pamyent is not recorded in invoice, Please contact to administrator.', array('!invoiceNumber' => $invoiceData['invoice_number'])), 'error');
+				watchdog("Payment error", '<pre>' . print_r( $message, true) . '</pre>');
+				drupal_goto(variable_get('quickbook_invoice_menu_url', '').'/payment/success', [
+					'query' => [
+						'invoice_id' => $invoice_id,
+						'payment_ref' => $unique_ref
+					]
+				]);
+			}
+		}
+		else {
+			drupal_set_message( t( 'We received the following error processing your card. Please enter your information again or try a different card.' ), 'error');
+			drupal_set_message( $message, 'error' );
+			//watchdog("Payment error", '<pre>' . print_r( $msg, true) . '</pre>');
+			drupal_goto( variable_get( 'quickbook_invoice_menu_url', '' ), [
+				'query' => ['invoice_id' => $invoice_id]
+			] );
+			return FALSE;
+	  	}
+}
+
+
+/**
+ * QuickBook Invoice Payment Success View Page
+ */
+function quickbook_invoice_payment_success_view() {
+	$invoice_id = isset($_GET['invoice_id']) ? $_GET['invoice_id'] : '';
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$invoiceData = $quickbookConnection->getQuickBookInvoice( $invoice_id );
+	$invoiceData['payment_id'] = isset($_GET['payment_id']) ? $_GET['payment_id'] : '';
+	$invoiceData['payment_ref'] = isset($_GET['payment_ref']) ? $_GET['payment_ref'] : '';
+	$paymentTotal = $invoiceData['total'] . ' ' . $invoiceData['currency_code'];
+	$paymentDate = date('Y-m-d');
+	$zoho_invoice_html = new QuickBookInvoiceHTML( $invoice_id, $invoiceData, $paymentTotal);
+	drupal_set_message('Your payment was successful. Thank You');
+	ob_start(); 
+	$zoho_invoice_html->quickbookInvoicePaymentSuccess();
+	$html = ob_get_contents(); 
+	ob_end_clean();
+	return [
+		'#markup' => $html
+	];	
+}
+
+
+/**
+ * QuickBook Invoice Payment From
+ */
+function quickbook_invoice_payment_form($form, &$form_state) {
+
+	global $user;
+	global $base_url;
+	$user_account = user_load($user->uid);
+	$field_globalone_mode = $field_global_one_secret = $field_global_one_terminal_id = '';
+	if ($user_account->field_globalone_mode) {
+		$field_globalone_mode = $user_account->field_globalone_mode['und'][0]['value'];
+	}
+	if ($user_account->field_global_one_secret) {
+		$field_global_one_secret = $user_account->field_global_one_secret['und'][0]['value'];
+	}
+	if ($user_account->field_global_one_terminal_id) {
+		$field_global_one_terminal_id = $user_account->field_global_one_terminal_id['und'][0]['value'];
+	}
+	if (isset($field_globalone_mode) && isset($field_global_one_secret) && isset($field_global_one_terminal_id)) {
+		$connected = _quickbooks_app_connected();
+		if(!$connected) {
+			if(!isset( $_GET['invoice_id'] )) {
+				$form['invoice_id'] = array(
+					'#type' => 'textfield',
+					'#title' => t('Please Enter Invoice Id'),
+					'#required' => TRUE,
+					'#size' => 20,
+				);
+				$form['q_submit'] = array(
+					'#type' => 'submit',
+					'#value' => t('Continue'),
+				);
+				$form['#method'] = 'GET';
+			}
+		}
+		else {
+			_check_expire_app_connection();
+
+
+			#####################################################
+			########### Code for Hosted Payment Page ############
+			#####################################################
+
+			$invoice_id = isset($_GET['invoice_id']) ? $_GET['invoice_id'] : '';
+			$client_id = variable_get('quickbook_client_id', 0);
+			$client_secret = variable_get('quickbook_client_secret', 0);
+			$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+			$invoiceData = $quickbookConnection->getQuickBookInvoice( $invoice_id );
+			$currency = (array) $invoiceData['currency_code'];
+			$terminal['secret'] = $field_global_one_secret;
+			$terminal['terminal_id'] = $field_global_one_terminal_id;
+			// $terminal['secret'] = variable_get('quickbook_invoice_global_one_secret', '');
+			// $terminal['terminal_id'] = variable_get('quickbook_invoice_global_one_terminal', '');
+			$date_time = date('d-m-Y:H:i:s').':000';
+
+			$stringToHash = '';
+	    $receiptUrl = $base_url.'/quickbook/invoice/payment/receipt';
+	    $stringToHash .= $terminal['terminal_id'];
+	    $stringToHash .= $invoice_id . '-' . time();
+	    $stringToHash .= $invoiceData['total'];
+	    // If multi-currency we should add currency to hash.
+	    if ($invoiceData['currency_code'] == 'MCP') {
+	      $stringToHash .= $currency[0];
+	    }
+	    $stringToHash .= $date_time;
+	    $stringToHash .= $receiptUrl;
+	    $stringToHash .= $terminal['secret'];
+	    $hash = md5($stringToHash);
+	    //https://testpayments.globalone.me/merchant/paymentpage?$_SERVER['QUERY_STRING']
+	    $final_url = $base_url.'/paymentiframe?TERMINALID='.$terminal['terminal_id'].'&ORDERID='.$invoice_id . '-' . time().'&SECURECARDMERCHANTREF='.$invoice_id . '' . time().'&CURRENCY='.$currency[0].'&AMOUNT='.$invoiceData['total'].'&DATETIME='.$date_time.'&HASH='.$hash.'&RECEIPTPAGEURL='.$receiptUrl.'';
+	    drupal_goto($final_url);
+			drupal_goto('admin/config/services/quickbook-invoice-config');
+		}
+	}else{
+		drupal_set_message('Please Set Globalone Details','warning');
+		drupal_goto('/user/'.$user->uid.'/edit');
+	}
+    //drupal_goto($final_url, array('external' => TRUE));
+
+		#############################################
+		########### Code for XMLPayments ############
+		#############################################
+		// module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');		
+		// $credit_card_fields = [
+		// 	'number' => '',
+		// 	'owner' => '',
+		// 	'exp_month' => '',
+		// 	'exp_year' => '',
+		// 	'code' => '',
+		// ];
+		// $form += commerce_payment_credit_card_form($credit_card_fields);
+		// $form['credit_card']['owner']['#title'] = 'Name on card';
+		// $form['credit_card']['code']['#title'] = 'CVV Number';
+		// $form['credit_card']['exp_month']['#title'] = 'Expiry Month';
+		// $form['credit_card']['exp_year']['#title'] = 'Expiry Year';
+		// $form['credit_card']['#prefix'] = '<div class="add-pay">Add your payment details</div>';
+		// $form['submit'] = array(
+		// 	'#type' => 'submit',
+		// 	'#value' => t('Proceed'),
+		// );
+	//}
+	return $form;
+}
+
+/**
+ * Validate QuickBook Invoice Payment Form
+ */
+function quickbook_invoice_payment_form_validate($form, &$form_state) {
+	$validate = 1;
+	module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
+	// Validate the credit card fields.
+	$settings = array(
+		'form_parents' => array('credit_card'),
+	);
+  $form_state['values']['credit_card']['type'] = '';
+	$form_state['values']['credit_card']['valid_types'] = array();
+	if (!commerce_payment_credit_card_validate($form_state['values']['credit_card'], $settings)) {				
+		$validate = 0;
+	}
+	if($validate) {
+  		return TRUE;
+	}
+	else {
+		return FALSE;
+	}
+}
+
+/**
+ * @param $form, $form_state
+ * QuickBook invoice payment handler
+ */
+function quickbook_invoice_payment_form_submit($form, &$form_state) {
+	module_load_include('inc', 'commerce_globalone', 'includes/commerce_globalone.post');
+	module_load_include('module', 'commerce_globalone', 'commerce_globalone');
+	module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
+	$invoice_id = isset($_GET['invoice_id']) ? $_GET['invoice_id'] : '';
+	$credit_card = $form_state['values']['credit_card'];
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$grant_type = "refresh_token";
+  $tokenEndPointUrl = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+  $refresh_token = variable_get('refresh_token',"");
+	$result = $quickbookConnection->refreshAccessToken($tokenEndPointUrl, $grant_type, $refresh_token);
+	if(isset($result['x_refresh_token_expires_in']) && isset($result['refresh_token'])) {
+    	variable_set('x_refresh_token_expires_in', $result['x_refresh_token_expires_in']);
+	    variable_set('refresh_token', $result['refresh_token']);
+	    variable_set('access_token', $result['access_token']);
+    }
+	$invoiceData = $quickbookConnection->getQuickBookInvoice( $invoice_id );
+	// Credit card type.
+	if ( empty( $credit_card['valid_types'] ) ) {
+		$credit_card_types =  commerce_payment_credit_card_types();
+		$credit_card['valid_types'] =  array_keys($credit_card_types);
+	}
+	$currency = (array) $invoiceData['currency_code'];
+	if( $invoice_id != '' ) {
+		if( $invoiceData ) {
+			if( $invoiceData['balance'] > 0 ) {
+				$params = array();
+				$params['ORDERID'] = $invoiceData['invoice_number'] . '-' . time();
+				$params['AMOUNT'] = $invoiceData['total'];
+				$params['CURRENCY'] = $currency[0]; //'USD'
+				$params['CARDNUMBER'] = $credit_card['number'];
+				$params['CARDHOLDERNAME'] = $credit_card['owner'];
+				$params['MONTH'] = $credit_card['exp_month'];
+				$params['YEAR'] = $credit_card['exp_year'];
+				$params['CVV'] = $credit_card['code'];
+				$params['DESCRIPTION'] = '';
+				$params['CARDTYPE'] = commerce_payment_validate_credit_card_type(
+					$credit_card['number'], 
+					$credit_card['valid_types']
+				);
+				$terminal['currency'] = $invoiceData['currency_code'];
+				$terminal['url'] =  variable_get('quickbook_invoice_global_one_mode', 'test') == 'live' ? GLOBALONE_LIVE_URL : GLOBALONE_TEST_URL;
+				$terminal['mode'] = variable_get('quickbook_invoice_global_one_mode', 'test');
+				$terminal['secret'] = variable_get('quickbook_invoice_global_one_secret', '');
+				$terminal['terminal_id'] = variable_get('quickbook_invoice_global_one_terminal', '');
+				$globalone_post = new CommerceGlobalonePost( $terminal, $params );
+				$response = $globalone_post->sendPayment();
+				$message = 'Transaction Failed';
+				if( $response['STATUS'] ) {
+					switch ($response['RESPONSECODE']) {
+						// Approved.
+						case 'A':
+							$message = t('Payment complete.');
+							break;
+
+						// Referred.
+						case 'R':
+							$message= t('The payment gateway referred authorisation.');
+							break;
+
+						// Declined or unknown.
+						case 'D':
+							default:
+							$message = t('The payment failed with the response: @response.', array(
+								'@response' => $response['RESPONSETEXT'],
+							));
+							break;
+					}
+				}
+				if ( isset( $response['RESPONSECODE'] ) && $response['RESPONSECODE'] == 'A' ) {
+					$invoiceData['payment_ref'] = $response['UNIQUEREF'];
+					$invResponse = $quickbookConnection->createQuickBookInvoicePayment( $invoiceData);
+					if( $invResponse ) {
+						drupal_set_message(t('Payment is successfully made for invoice !invoiceNumber', array('!invoiceNumber' => $invoiceData['invoice_number'])));
+						drupal_goto(variable_get('quickbook_invoice_menu_url', '').'/payment/success', [
+							'query' => [
+								'invoice_id' => $invoice_id,
+								'payment_id' => $invResponse->Id,
+								'payment_ref' => $response['UNIQUEREF']
+							]
+						]);
+					}
+					else {
+						drupal_set_message(t('Payment is successfully made for invoice !invoiceNumber. But pamyent is not recorded in invoice, Please contact to administrator.', array('!invoiceNumber' => $invoiceData['invoice_number'])), 'error');
+						watchdog("Payment error", '<pre>' . print_r( $response['RESPONSETEXT'], true) . '</pre>');
+						drupal_goto(variable_get('quickbook_invoice_menu_url', '').'/payment/success', [
+							'query' => [
+								'invoice_id' => $invoice_id,
+								'payment_ref' => $response['UNIQUEREF']
+							]
+						]);
+					}
+				}
+				else {
+					drupal_set_message( t( 'We received the following error processing your card. Please enter your information again or try a different card.' ), 'error');
+					drupal_set_message( $message, 'error' );
+					watchdog("Payment error", '<pre>' . print_r( $response['RESPONSETEXT'], true) . '</pre>');
+					drupal_goto( variable_get( 'quickbook_invoice_menu_url', '' ), [
+						'query' => ['invoice_id' => $invoice_id]
+					] );
+					return FALSE;
+			  	}
+		  	}
+		  	else {
+		  		drupal_set_message( t( 'Invoice INV already paid.', array( 'INV' => $invoice_id ) ), 'error' );
+					watchdog("Invoice INV already paid", '<pre>' . print_r( $response['RESPONSETEXT'], true) . '</pre>');
+		  		drupal_goto( variable_get( 'quickbook_invoice_menu_url', '' ), [
+					'query' => ['invoice_id' => $invoice_id]
+				] );
+				return FALSE;
+		  	}		
+		}
+		else {
+			drupal_goto( variable_get( 'quickbook_invoice_menu_url', '' ), [
+				'query' => ['invoice_id' => $invoice_id]
+			] );
+			return FALSE;
+		}
+	}
+	else {
+		drupal_set_message( t( "Invoice Id not found." ), 'error' );
+		watchdog("Invoice Id not found", '<pre>' . print_r( $response['RESPONSETEXT'], true) . '</pre>');
+		drupal_goto( variable_get( 'quickbook_invoice_menu_url', '' ) );
+		return FALSE;
+	}
+}
+
+/**
+ * Set Cron For Get New Access Token Before Expire
+ */
+function quickbook_invoice_payment_cron() {
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$quickbookConnection = new QuickBookInvoiceAPI($client_id, $client_secret);
+	$dataService = $quickbookConnection->dataService;
+	$OAuth2LoginHelper = $dataService->getOAuth2LoginHelper();
+	$accessToken = $OAuth2LoginHelper->refreshToken();
+	if( !empty( $tokenRes ) ) {
+		if( $tokenRes->ErrorCode == 0 ) {
+			variable_set( 
+				'quickbook_access_token', 
+				$tokenRes->OAuthToken 
+			);
+
+			variable_set( 
+				'quickbook_access_token_secret', 
+				$tokenRes->OAuthTokenSecret 
+			);
+
+			watchdog( 
+				'QuickBook Invoice Payment', 
+				t( 'New Access Token & Access Token Secret Generated.' ), 
+				NULL, 
+				WATCHDOG_NOTICE 
+			);
+		}
+		elseif( $tokenRes->ErrorCode == 212 ) {
+			watchdog( 
+				'QuickBook Invoice Payment', 
+				t( $tokenRes->ErrorMessage ), 
+				NULL, 
+				WATCHDOG_NOTICE 
+			);
+		}
+		elseif( $tokenRes->ErrorCode == 270 ) {
+			$msg = '. Access Token & Access Token Secret Expired. Please Re-create new Access Token & Access Token Secret.';
+			watchdog( 
+				'QuickBook Invoice Payment', 
+				t( $tokenRes->ErrorMessage . $msg ), 
+				NULL, 
+				WATCHDOG_ERROR 
+			);
+		}
+	}
+	else {
+		$msg = t( 'Access Token & Access Token Secret Expired. Please Re-create new Access Token & Access Token Secret.' );
+		watchdog( 'QuickBook Invoice Payment', 
+			$msg, 
+			NULL, 
+			WATCHDOG_ERROR 
+		);
+	}
+}
+
+/*
+* Check Expire App connection.
+*/	
+function _check_expire_app_connection() {
+	global $base_url;
+	$url = $base_url . "/admin/config/services/quickbook-invoice-config";
+	$seconds = variable_get('x_refresh_token_expires_in', 0);
+	$days = floor($seconds / 3600 / 24);
+	$expire_date = date('Y-m-d', strtotime(' +'. $days .' day'));
+	$current_date = date('Y-m-d');
+	if($expire_date < $current_date) {
+		drupal_set_message(t('Your QuickBook Connection time expired please connect <a href="' . $url .'">here</a>.'),'warning');
+	}
+}
+
+
+/*
+* Implement hook_menu_alter().
+*/	
+function quickbook_invoice_payment_oauth2_menu_alter(&$items) {
+// print('<pre style="color:red;">');
+// print_r("comming");
+// print('</pre>');
+// exit;
+// 	if(isset($items['quickbook/invoice/payment/success'])) {
+// 		$items['quickbook/invoice/payment/success'] = null;
+// 	}
+}
+
+
+/*
+* Implements hook_user_login().
+*/
+// function quickbook_invoice_payment_oauth2_user_login(&$edit, $account) {
+// 	$roles = $account->roles;
+// 	$connected = _quickbooks_app_connected();
+// 	if(in_array('site administrator', $roles)) {
+// 		if(!$connected) {
+// 			drupal_goto('admin/config/services/quickbook-invoice-config');
+// 		}
+// 		else {
+// 			drupal_goto('quickbook/invoice-list');
+// 		}
+// 	}	
+// }
+
+/*
+* Implements hook_user_logout().
+*/
+function quickbook_invoice_payment_oauth2_user_logout($account) {
+	session_destroy();
+	drupal_goto('user');
+}
+
+/*
+* Custom function _quickbooks_app_connected().
+*/
+function _quickbooks_app_connected() {
+	$reconnect = variable_get('reconnect', 0);
+	$seconds = variable_get('x_refresh_token_expires_in', 0);
+	$days = floor($seconds / 3600 / 24);
+	$expire_date = date('Y-m-d', strtotime(' +'. $days .' day'));
+	$current_date = date('Y-m-d');
+ 	if($expire_date < $current_date || $seconds == 0 || $reconnect) {
+		echo $expire_date . ' < ' . $current_date . ' || ' .  $seconds . ' || ' . $reconnect;
+		die();
+		return FALSE;
+	}
+	else {
+		return TRUE;
+	}
+}
+
+
+/*
+* Implement hook_form_alter().
+*/
+function quickbook_invoice_payment_oauth2_form_alter(&$form, &$form_state, &$form_id) {
+	global $user;
+	global $base_url;
+
+	$access_token = '';
+	$user_acc = user_load($user->uid);
+	if ($user_acc->field_quickbook_accestoken) {
+		$access_token = $user_acc->field_quickbook_accestoken['und'][0]['value'];
+	}
+
+	//Quickbook Connection Message
+	if ($access_token) {
+		$connection_mess = '<div class="connect-message-user">You are now connected to the Quickbooks Accounts. The information that is on your Quickbooks accounts will apperas here. You will be able to disconnect your account with this app by clicking on this link <a href="'.$base_url.'/quickbook/disconnect">disconnect</a>.</div>';
+	}
+	else{
+		$connection_mess = '<div class="connect-message-user">You are now disconnected to the Quickbooks Accounts. The information that is on your Quickbooks accounts will apperas here. You will be able to connect your account with this app by clicking on this link <a href="'.$base_url.'/quickbook/connect" class="btnConnect">connect</a>.</div>';
+	}
+
+	$roles = $user->roles;
+	if($form_id == "quickbook_invoice_payment_config_form" && (in_array('site administrator', $roles))) {
+		$form['quickbook_client_id']['#type'] = 'hidden';
+		$form['quickbook_client_secret']['#type'] = 'hidden';
+	}
+
+	if ($form_id == 'user_register_form' || $form_id == 'user_login') {
+		 $form['#suffix'] = '<p class="or-css"><strong><span>or</span></strong></p><a class="btnLogin" href="'.$base_url.'/quickbook-register-submit"></a>';
+ }
+	if ($form_id == 'user_register_form') {
+		$form['#submit'][] = 'quickbook_invoice_payment_oauth2_custom_submission';
+	}
+
+	if ($form_id == 'user_profile_form') {
+		$form['#prefix'] = $connection_mess;
+	}
+
+}
+
+
+/**
+ * Submit handler
+ */
+function quickbook_invoice_payment_oauth2_custom_submission($form, &$form_state)
+{
+	global $base_url;
+	$formValues = $form_state['values'];
+	$userName = $formValues['name'];
+	$userPass = $formValues['pass'];
+	$userMail = $formValues['mail'];
+	$url = 'user/quickbook/register/'.$userMail;
+	drupal_goto($url);
+}
+
+/*
+* Implement page_callback.
+*/
+function quickbook_custom_login_auth() {
+	global $base_url;
+
+	$client_id = $client_secret = '';
+	$client_id = variable_get('quickbook_client_id', 0);
+	$client_secret = variable_get('quickbook_client_secret', 0);
+	$scope = "com.intuit.quickbooks.accounting com.intuit.quickbooks.payment openid profile email phone address";
+	$QuickBookInvoiceAPI = new QuickBookInvoiceAPI($client_id, $client_secret,$scope);
+	$QuickBookInvoiceAPI->quickbookConnection( TRUE );
+}
+
+/**
+ * Quickbooks Secound Step
+ */
+function quickbook_register_form($form, &$form_state, $key){
+
+	$form['subdomain'] = array(
+	  '#type' => 'textfield',
+	  '#title' => t('Subdomain Name'),
+	  '#required' => TRUE,
+	  '#size' => 40,
+	  );
+	  $form['user_mail'] = array(
+	  '#type' => 'textfield',
+	  '#title' => t('User Mail'),
+	  '#required' => TRUE,
+	  '#size' => 40,
+	  '#default_value' => $key,
+	  );
+	  module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');		
+		$credit_card_fields = [
+			'number' => '',
+			'owner' => '',
+			'exp_month' => '',
+			'exp_year' => '',
+			'code' => '',
+		];
+		$form += commerce_payment_credit_card_form($credit_card_fields);
+		$form['credit_card']['owner']['#title'] = 'Name on card';
+		$form['credit_card']['code']['#title'] = 'CVV Number';
+		$form['credit_card']['exp_month']['#title'] = 'Expiry Month';
+		$form['credit_card']['exp_year']['#title'] = 'Expiry Year';
+	  $form['submit'] = array(
+	  '#type' => 'submit',
+	  '#value' => t('Submit'),
+	  );
+	  return $form;
+
+}
+
+/**
+ * Validate Domain Data
+ */
+function quickbook_register_form_validate($form, &$form_state) {
+	// Domain Validations
+	$sub_val = $form_state['values'];
+  $url = $sub_val['subdomain'];
+  if (strpos($url, '.') !== FALSE || strpos($url, ' ') == true) {
+      form_set_error('subdomain', t("Please enter a valid subdomain."));
+  }
+  $domain_result = db_select('domain', 'd')
+    ->fields('d')
+    ->condition('subdomain', $url,'=')
+    ->execute()
+    ->fetchAssoc();
+  if ($domain_result) {
+    form_set_error('subdomain', 'Sorry. This Subdomain is already taken.');
+  }
+  $validate = 1;
+	module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
+	// Validate the credit card fields.
+	$settings = array(
+		'form_parents' => array('credit_card'),
+	);
+  $form_state['values']['credit_card']['type'] = '';
+	$form_state['values']['credit_card']['valid_types'] = array();
+	if (!commerce_payment_credit_card_validate($form_state['values']['credit_card'], $settings)) {				
+		$validate = 0;
+	}
+	if($validate) {
+  		return TRUE;
+	}
+	else {
+		return FALSE;
+	}
+}
+
+
+
+/**
+ * Save Domain Data
+ */
+function quickbook_register_form_submit($form, &$form_state) {
+	global $base_url;
+	$submit_val = $form_state['values'];
+	$userMail = $submit_val['user_mail'];
+	if (isset($_SESSION['user_password'])) {
+   $user_password = $_SESSION['user_password'];
+  }
+  $user = user_load_by_mail($userMail);
+	//global $user;
+
+	######################################################
+  ###########  Create Subdomain on Drupal Start  #######
+  ######################################################
+  $subdomain_name = $submit_val['subdomain'] . "." . $_SERVER['SERVER_NAME'];
+  $values = array();
+  $values['subdomain'] = $subdomain_name;  // example $node->field_subdomain['und']['value']
+  $values['scheme'] = 'https';
+  $values['valid'] = '1'; // example 0 or 1
+  $values['weight'] =  '4'; // example -10 to 10 
+  $values['sitename'] = $subdomain_name; // example $node->field_subdomain_sitename['und']['value']
+  $domain = domain_save($values);
+  if ($domain == -1) {
+    $message = t('Domain record failed.');
+  }
+  else {
+    $message = t('Domain created.');
+    drupal_set_message($message);    
+  }
+	######################################################
+  ###########  Create Subdomain on Drupal End    #######
+  ######################################################
+
+  ######################################################
+  ###########  Create Domain on RunCloud Start   #######
+  ######################################################
+  $data = array("domainName" => $subdomain_name);
+  $data_string = json_encode($data);
+  $runcld_api_key = variable_get('runcloud_api_key');
+  $runcld_api_secret = variable_get('runcloud_api_secret');
+  $runcloud_server_id =  variable_get('server_key');
+  $runcloud_web_app_id = variable_get('web_app_key');
+
+ 	$url = 'https://manage.runcloud.io/base-api/servers/' . $runcloud_server_id . '/webapps/' . $runcloud_web_app_id . '/domainname';
+ 	//  $url = 'https://manage.runcloud.io/base-api/servers/'.$runcld_api_key.'/webapps/'.$runcld_api_secret.'/domainname';
+
+  $ch = curl_init($url);
+  curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+  curl_setopt($ch, CURLOPT_USERPWD, $runcld_api_key.":".$runcld_api_secret);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $data_string);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json','Accept: application/json'));
+  $result = curl_exec($ch);
+  curl_close($ch);
+  ######################################################
+  ###########  Create Domain on RunCloud End     #######
+  ######################################################
+
+
+  #########################################################
+  ###########  GlobalOne Payment Recurring Start   ########
+  #########################################################
+  module_load_include('inc', 'commerce_globalone', 'includes/commerce_globalone.post');
+	module_load_include('module', 'commerce_globalone', 'commerce_globalone');
+	module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
+
+	$credit_card = $form_state['values']['credit_card'];
+
+	// Credit card type.
+	if ( empty( $credit_card['valid_types'] ) ) {
+		$credit_card_types =  commerce_payment_credit_card_types();
+		$credit_card['valid_types'] =  array_keys($credit_card_types);
+	}
+
+	$params = array();
+	$params['ORDERID'] = 'quickbook-' . time();
+	$params['AMOUNT'] = '10';
+	$params['CURRENCY'] = 'USD';
+	$params['CARDNUMBER'] = $credit_card['number'];
+	$params['CARDHOLDERNAME'] = $credit_card['owner'];
+	$params['MONTH'] = $credit_card['exp_month'];
+	$params['YEAR'] = $credit_card['exp_year'];
+	$params['CVV'] = $credit_card['code'];
+	$params['DESCRIPTION'] = '';
+	$params['LENGTH'] = variable_get('trial_period_days', '12');
+	$params['INITIALAMOUNT'] = variable_get('trial_period_amount','10');
+	$params['RECURRINGAMOUNT'] = variable_get('recurring_amount', '20');
+	$params['CARDTYPE'] = commerce_payment_validate_credit_card_type(
+	$credit_card['number'], 
+	$credit_card['valid_types']
+	);
+
+$global_one_mode = variable_get('quickbook_invoice_global_one_mode', 'test');
+$global_one_secret = variable_get('quickbook_invoice_global_one_secret', '');
+$global_one_terminal = variable_get('quickbook_invoice_global_one_terminal', '');
+$global_one_url =  variable_get('quickbook_invoice_global_one_mode', 'test') == 'live' ? GLOBALONE_LIVE_URL : GLOBALONE_TEST_URL;
+
+$terminal['currency'] = 'USD';
+$terminal['url'] =  $global_one_url;
+$terminal['mode'] = variable_get('quickbook_invoice_global_one_mode', 'test');
+$terminal['secret'] = $global_one_secret;
+$terminal['terminal_id'] = $global_one_terminal;
+
+###########  Make Payment  ######
+
+// $globalone_post = new CommerceGlobalonePost( $terminal, $params );
+// $response = $globalone_post->sendPayment();
+
+###########  Make Payment End  ######
+
+###########  Create Secure Card  ######
+
+$globalone_sceure_url = new CommerceGlobaloneSecCard($terminal, $params);
+$reg_response = $globalone_sceure_url->sendRegister();
+
+if ($reg_response) {
+	$subinfo['seccard_mref'] = $reg_response['MERCHANTREF'];
+	$subinfo['seccard_cref'] = $reg_response['CARDREFERENCE'];
+	//drupal_set_message('card is added to secure card.');
+}
+
+###########  Create Secure Card End  ######
+
+###########  Create Stored Subscription  ########
+$globalone_storesub_url = new CommerceGlobaloneSubscription($terminal, $params);
+$stosub_response = $globalone_storesub_url->sendSubscription();
+if ($stosub_response) {
+	$subinfo['storesub_mref'] = $stosub_response['MERCHANTREF'];
+	$subinfo['storesub_date'] = $stosub_response['DATETIME'];
+}
+
+###########  GlobalOne Subscribe for Stored Subscription Plan  ########
+$globalone_cresub_url = new CommerceGlobaloneCreateSubscription($terminal, $params,$subinfo);
+$cresub_response = $globalone_cresub_url->createSubscription();
+
+	###########  Store GlobalOne Subscription Info Into Users Object  ########
+	// $existingUser = user_load($user->uid);
+	// $existingUser->field_global_one_recurring_ref['und'][0]['value'] = json_encode($cresub_response);
+	// user_save($existingUser);
+
+##########################################################
+###########    GlobalOne Payment Recurring End    ########
+##########################################################
+$form_state = array();
+$form_state['values']['name'] = $userMail;
+$form_state['values']['pass'] = $user_password;  
+$form_state['values']['op'] = t('Log In'); 
+
+drupal_form_submit('user_login', $form_state);
+drupal_goto($base_url.'/user/'.$user->uid.'/edit');
+}
+
+
+function _cancel_subscription() {
+	global $user;
+	$existingUser = user_load($user->uid);
+	$global_one_recurring_ref = json_decode($existingUser->field_global_one_recurring_ref['und'][0]['value']);
+
+	$terminal['currency'] = 'USD';
+	$terminal['url'] =  'https://testpayments.globalone.me/merchant/xmlpayment';
+	$terminal['mode'] = 'test';
+	$terminal['secret'] = 'addweb123';
+	$terminal['terminal_id'] = '99108';
+	$merchant_ref = $global_one_recurring_ref->MERCHANTREF;
+	$date_time = date('d-m-Y:H:i:s').':000';
+	$secret = variable_get('quickbook_invoice_global_one_secret', '');
+	$hash = md5($terminal['terminal_id'] . $merchant_ref . $date_time . $terminal['secret']);
+	$XML = '<?xml version="1.0" encoding="UTF8"?>
+						<CANCELSUBSCRIPTION>
+						 <MERCHANTREF>' . $merchant_ref . '</MERCHANTREF>
+						 <TERMINALID>' . $terminal['terminal_id'] . '</TERMINALID>
+						 <DATETIME>' . $date_time . '</DATETIME>
+						 <HASH>' . $hash . '</HASH>
+						</CANCELSUBSCRIPTION>';
+
+  $curl = new CommerceGlobaloneCurl();
+  $resp = $curl->curlXmlRequest($terminal['url'], $XML);
+
+  drupal_set_message("Cancel subscription complete.");
+  drupal_goto($base_url);
+}
+
+/**
+ * QuickBook Oauth Configuration Form
+ */
+// function quickbook_oauth_openid_config_form($form, &$form_state) {
+//   global $user;
+//   if(in_array('site administrator', $user->roles) || in_array('administrator', $user->roles)) {
+//   $form['development_client_id'] = array(
+//     '#type' => 'textfield',
+//     '#title' => t('Development Client Id'),
+//     '#default_value' => variable_get('development_client_id', ''),
+//     '#required' => TRUE,
+//     '#size' => 40,
+//   );
+//   $form['development_client_secret'] = array(
+//     '#type' => 'textfield',
+//     '#title' => t('Development Client Secret'),
+//     '#default_value' => variable_get('development_client_secret', ''),
+//     '#required' => TRUE,
+//     '#size' => 40,
+//   );
+//   // $form['production_client_id'] = array(
+//   //   '#type' => 'textfield',
+//   //   '#title' => t('Production Client Id'),
+//   //   '#default_value' => variable_get('production_client_id', ''),
+//   //   '#required' => TRUE,
+//   //   '#size' => 40,
+//   // );
+//   // $form['production_client_secret'] = array(
+//   //   '#type' => 'textfield',
+//   //   '#title' => t('Production Client Secret'),
+//   //   '#default_value' => variable_get('production_client_secret', ''),
+//   //   '#required' => TRUE,
+//   //   '#size' => 40,
+//   // );
+//   // $form['quickbook_mode'] = array(
+//   //   '#type' => 'select',
+//   //   '#title' => t('Quickbook Mode'),
+//   //   '#default_value' => variable_get('quickbook_mode', 'development'),
+//   //   '#options' => ['development' => 'development', 'production' => 'production'],
+//   //   '#required' => TRUE,
+//   // );
+//   $form['quickbook_submit'] = array(
+//     '#type' => 'submit',
+//     '#value' => t('Submit'),
+//   );
+//   return $form;
+//   }
+// }
+
+/**
+ * Save QuickBook Invoice Cofiguration Data
+ */
+// function quickbook_oauth_openid_config_form_submit($form, &$form_state) {
+//   $form_values = $form_state['values'];
+//   $dev_clientid = $form_values['development_client_id'];
+//   $dev_clientsec = $form_values['development_client_secret'];
+//   $prod_clientid = $form_values['production_client_id'];
+//   $prod_clientsec = $form_values['production_client_secret'];
+//   $quickbook_mode = $form_values['quickbook_mode'];
+//   variable_set('development_client_id', $dev_clientid);
+//   variable_set('development_client_secret', $dev_clientsec);
+//   variable_set('production_client_id', $prod_clientid);
+//   variable_set('production_client_secret', $prod_clientsec);
+//   variable_set('quickbook_mode', $quickbook_mode);
+
+//   drupal_set_message( t( 'Configuration saved successfully.'));
+// }

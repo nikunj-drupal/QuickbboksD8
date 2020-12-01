@@ -1,0 +1,19 @@
+{
+    "name": "joshideas/qbosdk3260",
+    "type": "library",
+    "description": "PHP library that connects to QuickBooks Online.",
+    "license": "MIT",
+    "require": {
+        "php": ">=5.5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "joshideas\\qbosdk3260\\": "src"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-master": "1.x-dev"
+        }
+    }
+}
